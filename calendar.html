@@ -1124,7 +1124,11 @@ function makeCell(day, month, year, other, todayStr) {
 
   const cell = document.createElement('div');
   cell.className = 'day-cell' + (other ? ' other-month' : '') + (ds === todayStr ? ' today' : '');
-  cell.onclick = () => openAddModal(ds);
+  cell.onclick = () => {
+    const dayEvs = eventsOnDate(ds);
+    if (dayEvs.length > 0) openDayModal(ds);
+    else openAddModal(ds);
+  };
 
   const dayRow = document.createElement('div');
   dayRow.style.cssText = 'display:flex;align-items:center;gap:3px;margin-bottom:3px;';
