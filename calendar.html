@@ -850,6 +850,11 @@ function init() {
   scheduleAll();
   updateNotifyBtn();
 
+  // 註冊 Service Worker（讓關閉網頁後也能收到提醒）
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW 註冊失敗', e));
+  }
+
   // Show/hide repeat-end row and exceptions row when repeat radio changes
   document.querySelectorAll('input[name="rrep"]').forEach(r =>
     r.addEventListener('change', () => {
@@ -892,6 +897,13 @@ function scheduleAll() {
   timers = {};
   if (Notification.permission !== 'granted') return;
 
+  // 取消舊的 SW 排程通知
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready.then(reg =>
+      reg.getNotifications().then(ns => ns.forEach(n => n.close()))
+    ).catch(() => {});
+  }
+
   const now = Date.now();
   const WINDOW = 8 * 24 * 60 * 60 * 1000; // look-ahead 8 days
 
@@ -918,10 +930,32 @@ function scheduleSingle(ev, ds, now, window_ms) {
   const fireAt = getReminderFireTime(ev, ds);
   if (!fireAt) return;
   const diff = fireAt - now;
-  if (diff > 0 && diff < window_ms) {
-    const key = `${ev.id}:${ds}`;
+  if (diff <= 0 || diff >= window_ms) return;
+
+  const key = `${ev.id}:${ds}`;
+
+  // 優先使用 TimestampTrigger（關閉網頁也能收到通知）
+  if ('serviceWorker' in navigator && typeof TimestampTrigger !== 'undefined') {
+    navigator.serviceWorker.ready.then(reg =>
+      reg.showNotification('🔔 ' + ev.title, {
+        body: buildReminderBody(ev, ds),
+        tag: key,
+        showTrigger: new TimestampTrigger(fireAt)
+      })
+    ).catch(() => {
+      timers[key] = setTimeout(() => fireNotification(ev, ds), diff);
+    });
+  } else {
+    // 備用：網頁開著才能收到
     timers[key] = setTimeout(() => fireNotification(ev, ds), diff);
   }
+}
+
+function buildReminderBody(ev, ds) {
+  const r = ev.reminder;
+  const txt = r === 0 ? '現在開始' : r < 60 ? `${r} 分鐘後開始` : r < 1440 ? `${r/60} 小時後開始` : `${r/1440} 天後開始`;
+  const cat = getCat(ev.category);
+  return `${cat.icon} ${cat.name} · ${formatDateLabel(ds)}${ev.time ? ' ' + ev.time : ''} · ${txt}`;
 }
 
 function getReminderFireTime(ev, ds) {
@@ -941,16 +975,9 @@ function getReminderFireTime(ev, ds) {
 
 function fireNotification(ev, ds) {
   if (Notification.permission !== 'granted') return;
-  const r = ev.reminder;
-  let txt = '';
-  if (r === 0)         txt = '現在開始';
-  else if (r < 60)     txt = `${r} 分鐘後開始`;
-  else if (r < 1440)   txt = `${r / 60} 小時後開始`;
-  else                 txt = `${r / 1440} 天後開始`;
-
   const repTxt = ev.repeat && ev.repeat !== 'none' ? ' 🔁' : '';
   new Notification('🔔 ' + ev.title + repTxt, {
-    body: `${CAT[ev.category]} · ${formatDateLabel(ds)}${ev.time ? ' ' + ev.time : ''} · ${txt}`,
+    body: buildReminderBody(ev, ds),
     tag: `${ev.id}:${ds}`,
   });
 }
